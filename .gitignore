@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+.env
+.env.*
+
+# OS
+.DS_Store
+
+# Data
+data/*.csv
+data/*.parquet
+# Permitimos subir dataset.pkl.gz
+!data/dataset.pkl.gz
+
+
+# Streamlit
+.streamlit/
