@@ -13,7 +13,8 @@ __pycache__/
 
 # Data
 data/*.csv
-data/*.parquet
+data/*.parque
+data/datasets/*
 # Permitimos subir dataset.pkl.gz
 !data/dataset.pkl.gz
 
