@@ -46,18 +46,6 @@ if os.path.exists(path_input):
 else:
     st.info("El archivo no existe. Cárgalo con el script de conversión o ajusta la ruta.")
 
-uploaded = st.file_uploader("…o sube un .pkl/.pkl.gz/.parquet/.csv", type=["pkl", "gz", "parquet", "csv"])
-if uploaded is not None:
-    try:
-        if uploaded.name.endswith(".csv"):
-            df = pd.read_csv(uploaded)
-        elif uploaded.name.endswith(".parquet"):
-            df = pd.read_parquet(uploaded)
-        else:
-            df = pd.read_pickle(uploaded)
-        st.success(f"Archivo cargado: {uploaded.name} | shape={df.shape}")
-    except Exception as e:
-        st.error(f"Error leyendo el archivo subido: {e}")
 
 if df is not None:
     st.subheader("📁 Vista rápida del dataset")
@@ -99,18 +87,28 @@ if df is not None:
             col2.metric("F1 (pos)", f"{results['metrics']['f1']:.4f}")
             col3.metric("ROC AUC", f"{results['metrics']['roc_auc']:.4f}")
             col4.metric("AP (PR AUC)", f"{results['metrics']['avg_precision']:.4f}")
+            # Organizar las gráficas en layout 2 arriba + 1 abajo
+            col1, col2 = st.columns(2)
 
-            # Graficar
-            st.subheader("📈 Curva ROC")
-            fig_roc = plot_roc_curve(results['y_true_pos'], results['y_score'])
-            st.pyplot(fig_roc, use_container_width=True)
+            with col1:
+                st.subheader("📈 Curva ROC")
+                fig_roc = plot_roc_curve(results['y_true_pos'], results['y_score'])
+                fig_roc.set_size_inches(4, 3)  # tamaño más compacto
+                st.pyplot(fig_roc, use_container_width=True)
 
-            st.subheader("📈 Curva Precisión-Recall")
-            fig_pr = plot_pr_curve(results['y_true_pos'], results['y_score'])
-            st.pyplot(fig_pr, use_container_width=True)
+            with col2:
+                st.subheader("📈 Curva Precisión-Recall")
+                fig_pr = plot_pr_curve(results['y_true_pos'], results['y_score'])
+                fig_pr.set_size_inches(4, 3)  # tamaño más compacto
+                st.pyplot(fig_pr, use_container_width=True)
 
             st.subheader("🧮 Matriz de confusión")
-            fig_cm = plot_confusion(results['y_true'], results['y_pred'], labels_order=[pos_class] + [c for c in classes if c != pos_class])
+            fig_cm = plot_confusion(
+                results['y_true'],
+                results['y_pred'],
+                labels_order=[pos_class] + [c for c in classes if c != pos_class]
+            )
+            fig_cm.set_size_inches(4.5, 3.5)  # tamaño reducido
             st.pyplot(fig_cm, use_container_width=True)
 
     else:
