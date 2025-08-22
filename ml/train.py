@@ -1,4 +1,4 @@
-from typing import Dict, Any, List
+from typing import Dict, Any
 import numpy as np
 import pandas as pd
 
@@ -6,7 +6,7 @@ from sklearn.compose import ColumnTransformer, make_column_selector as selector
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
@@ -17,6 +17,7 @@ from sklearn.metrics import (
     average_precision_score,
     confusion_matrix,
 )
+
 
 def build_preprocessor(X: pd.DataFrame):
     num_selector = selector(dtype_include=np.number)
@@ -40,6 +41,7 @@ def build_preprocessor(X: pd.DataFrame):
     )
     return preprocessor
 
+
 def train_and_evaluate(
     df: pd.DataFrame,
     target_col: str,
@@ -49,69 +51,82 @@ def train_and_evaluate(
     random_state: int = 42,
 ) -> Dict[str, Any]:
     """
-    Entrena un modelo simple (LogisticRegression) con N muestras y calcula métricas.
-    Asume clasificación binaria para ROC/PR (elige 'positive_class').
+    Entrena un modelo (LogisticRegression) con N muestras y calcula métricas.
+    Incluye validación cruzada para dar valores más realistas y menos inflados.
     """
     y = df[target_col]
     X = df.drop(columns=[target_col])
 
-    # Split
+    # 1. Eliminar columnas que copian al target
+    if target_col in X.columns:
+        X = X.drop(columns=[target_col])
+
+    # 2. Quitar columnas con cardinalidad igual al target (posible fuga de info)
+    for col in X.columns:
+        if X[col].nunique() == y.nunique() and set(X[col].unique()) == set(y.unique()):
+            X = X.drop(columns=[col])
+
+    # 3. Split estratificado
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=random_state, stratify=y
+        X, y,
+        test_size=test_size,
+        random_state=random_state,
+        stratify=y
     )
 
-    # Limitar tamaño de entrenamiento
-    n_train = int(min(n_train, len(X_train)))
-    X_train_small = X_train.iloc[:n_train]
-    y_train_small = y_train.iloc[:n_train]
+    # 4. Ajustar n_train al tamaño disponible
+    n_train = min(n_train, len(X_train))
+    if n_train < len(X_train):
+        train_idx = np.random.choice(len(X_train), size=n_train, replace=False)
+        X_train = X_train.iloc[train_idx]
+        y_train = y_train.iloc[train_idx]
 
-    # Pipeline
+    # 5. Pipeline completo (preprocesador + modelo)
     pre = build_preprocessor(X)
-    clf = LogisticRegression(max_iter=200, solver="liblinear")
-
+    clf = LogisticRegression(max_iter=500, solver="liblinear", class_weight="balanced")
     pipe = Pipeline(steps=[("pre", pre), ("clf", clf)])
-    pipe.fit(X_train_small, y_train_small)
 
-    # Predicciones
+    # 6. Validación cruzada en el set de entrenamiento
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
+    cv_scores = cross_val_score(pipe, X_train, y_train, cv=cv, scoring="f1")
+
+    # 7. Entrenamiento final con los datos de train
+    pipe.fit(X_train, y_train)
+
+    # 8. Predicciones
     y_pred = pipe.predict(X_test)
 
-    # Probabilidades para ROC/PR (columna de la clase positiva)
     if hasattr(pipe, "predict_proba"):
         proba = pipe.predict_proba(X_test)
-        # Obtener índice de la clase positiva según classes_
         classes_ = pipe.named_steps["clf"].classes_
         if positive_class not in classes_:
             raise ValueError(f"La clase positiva '{positive_class}' no está en las clases del modelo: {classes_}")
         pos_idx = int(np.where(classes_ == positive_class)[0][0])
         y_score = proba[:, pos_idx]
     else:
-        # Fallback a decision_function si existe
         y_score = pipe.decision_function(X_test)
-        # Escalar a 0-1 por comodidad
         y_score = (y_score - y_score.min()) / (y_score.max() - y_score.min() + 1e-9)
 
-    # Métricas
-    acc = accuracy_score(y_test, y_pred)
-    f1 = f1_score(y_test, y_pred, pos_label=positive_class)
-    # Para ROC/PR se usa binarización booleana de la clase positiva
+    # 9. Métricas
     y_true_pos = (y_test == positive_class).astype(int)
-    roc_auc = roc_auc_score(y_true_pos, y_score)
-    precision, recall, _ = precision_recall_curve(y_true_pos, y_score)
-    avg_precision = average_precision_score(y_true_pos, y_score)
+    metrics = {
+        "accuracy": float(accuracy_score(y_test, y_pred)),
+        "f1": float(f1_score(y_test, y_pred, pos_label=positive_class)),
+        "roc_auc": float(roc_auc_score(y_true_pos, y_score)),
+        "avg_precision": float(average_precision_score(y_true_pos, y_score)),
+        "cv_f1_mean": float(cv_scores.mean()),
+        "cv_f1_std": float(cv_scores.std()),
+    }
 
     return {
-        "metrics": {
-            "accuracy": float(acc),
-            "f1": float(f1),
-            "roc_auc": float(roc_auc),
-            "avg_precision": float(avg_precision),
-        },
+        "metrics": metrics,
         "y_true": y_test,
         "y_pred": y_pred,
         "y_true_pos": y_true_pos,
         "y_score": y_score,
-        "precision": precision,
-        "recall": recall,
+        "precision": precision_recall_curve(y_true_pos, y_score)[0],
+        "recall": precision_recall_curve(y_true_pos, y_score)[1],
         "confusion_matrix": confusion_matrix(y_test, y_pred),
         "classes_": list(np.unique(y)),
     }
+
